@@ -91,6 +91,12 @@ export const ProspectsOutreachView: React.FC<ProspectsOutreachViewProps> = ({
     }
   }, [workspaceToken, subTab]);
 
+  useEffect(() => {
+    if (state.settings.defaultGoogleFormId && !formIdInput) {
+      setFormIdInput(state.settings.defaultGoogleFormId);
+    }
+  }, [state.settings.defaultGoogleFormId]);
+
   const handleAddProspect = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!businessName.trim() || addingProspect) return;
@@ -117,9 +123,17 @@ export const ProspectsOutreachView: React.FC<ProspectsOutreachViewProps> = ({
   };
 
   const handlePrepareEmailForProspect = (p: Prospect) => {
+    const demoUrl =
+      state.projects.find((proj) => proj.isDemo && proj.integrations?.netlifyUrl)?.integrations
+        ?.netlifyUrl || '';
     setGmailTo(p.contactEmail || '');
     setGmailSubject(`Maquette de site web pour ${p.businessName}`);
-    setGmailBody(DEFAULT_TEMPLATE);
+    setGmailBody(
+      demoUrl
+        ? DEFAULT_TEMPLATE.replace('[lien de votre démo]', demoUrl)
+        : DEFAULT_TEMPLATE
+    );
+    setMailStatus(null);
     setSubTab('gmail');
   };
 
@@ -136,7 +150,7 @@ export const ProspectsOutreachView: React.FC<ProspectsOutreachViewProps> = ({
           goal,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Erreur IA');
       setGmailBody(data.message);
     } catch (err: any) {
@@ -495,7 +509,7 @@ export const ProspectsOutreachView: React.FC<ProspectsOutreachViewProps> = ({
             {workspaceToken ? (
               <button
                 type="button"
-                disabled={!gmailTo.trim() || !gmailSubject.trim()}
+                disabled={!gmailTo.trim().includes('@') || !gmailSubject.trim() || !gmailBody.trim()}
                 onClick={() => setConfirmSendOpen(true)}
                 className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >

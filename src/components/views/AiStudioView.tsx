@@ -16,9 +16,11 @@ import {
   AlertCircle,
   FolderPlus,
   ExternalLink,
+  Scale,
 } from 'lucide-react';
 import type { ClientProject, ThirdPartyProviderStatus } from '../../types';
 import { uploadHtmlToGoogleDrive } from '../../lib/googleWorkspace';
+import { evaluateProjectLegalCompliance } from '../../lib/legalCompliance';
 import { ConfirmModal } from '../ConfirmModal';
 
 interface AiStudioViewProps {
@@ -180,7 +182,7 @@ export const AiStudioView: React.FC<AiStudioViewProps> = ({
           fontPair,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.error || 'Échec de génération');
       }
@@ -213,7 +215,7 @@ export const AiStudioView: React.FC<AiStudioViewProps> = ({
           instruction: refineInput.trim(),
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.error || 'Échec de la retouche');
       }
@@ -240,7 +242,7 @@ export const AiStudioView: React.FC<AiStudioViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ html: htmlCode, project: selectedProject }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.error || 'Audit impossible');
       }
@@ -453,6 +455,33 @@ export const AiStudioView: React.FC<AiStudioViewProps> = ({
           </div>
         </div>
 
+        {selectedProject && (() => {
+          const legalReport = evaluateProjectLegalCompliance(selectedProject);
+          return (
+            <div
+              className={`rounded-lg border px-4 py-2.5 text-xs flex flex-wrap items-center justify-between gap-2 ${
+                legalReport.isFullyCompliant
+                  ? 'border-emerald-200 bg-emerald-50/70 text-emerald-900'
+                  : 'border-amber-200 bg-amber-50/70 text-amber-900'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <Scale className="h-4 w-4 shrink-0" />
+                <span>
+                  <strong>Conformité légale ({selectedProject.clientName}) :</strong>{' '}
+                  {legalReport.score}/{legalReport.total} points prêts pour les mentions légales & RGPD.
+                  {!legalReport.isFullyCompliant && legalReport.missingLabels.length > 0 && (
+                    <> Manque : {legalReport.missingLabels.slice(0, 3).join(', ')}.</>
+                  )}
+                </span>
+              </div>
+              <span className="font-mono text-[11px]">
+                Injecté automatiquement dans la génération IA
+              </span>
+            </div>
+          );
+        })()}
+
         {feedback && (
           <div
             className={`rounded-lg border px-4 py-2.5 text-xs font-medium ${
@@ -631,7 +660,7 @@ export const AiStudioView: React.FC<AiStudioViewProps> = ({
 
           <div className="rounded-xl border border-slate-200/90 bg-white p-5 space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold text-slate-900">Audit qualité (Guide §4)</h3>
+              <h3 className="text-sm font-semibold text-slate-900">Audit qualité & Loi (7 points)</h3>
               <button
                 type="button"
                 onClick={handleAudit}
@@ -661,7 +690,7 @@ export const AiStudioView: React.FC<AiStudioViewProps> = ({
               </div>
             ) : (
               <p className="text-xs text-slate-500">
-                Vérifie les horaires, prix, adaptation mobile, droits images et mentions légales avant livraison.
+                Vérifie NAP, mobile, droits images, mentions légales LCEN (SIREN/SIRET/hébergeur), RGPD, médiateur B2C, cookies & SEO local.
               </p>
             )}
           </div>

@@ -40,11 +40,65 @@ export interface ProjectBrief {
   budgetRange: string;
 }
 
+export type LegalFormType =
+  | 'EI / Micro-entrepreneur'
+  | 'SARL'
+  | 'EURL'
+  | 'SAS'
+  | 'SASU'
+  | 'SCI'
+  | 'Association loi 1901'
+  | 'Autre';
+
+export type HostingProviderPreset =
+  | 'Netlify'
+  | 'GitHub Pages'
+  | 'Cloudflare Pages'
+  | 'Framer'
+  | 'OVHcloud'
+  | 'Render'
+  | 'Autre';
+
+export interface ProjectLegalInfo {
+  legalForm: LegalFormType;
+  legalCompanyName: string;
+  publicationDirector: string;
+  siren: string;
+  siret: string;
+  shareCapitalEur: string;
+  registrationNumber: string;
+  vatNumber: string;
+  registeredAddress: string;
+  b2cAudience: boolean;
+  consumerMediatorName: string;
+  consumerMediatorWebsite: string;
+  consumerMediatorAddress: string;
+  regulatedProfessionDetails: string;
+  hostingProvider: HostingProviderPreset;
+  hostingProviderName: string;
+  hostingProviderAddress: string;
+  hostingProviderPhone: string;
+  domainRegistrar: string;
+  customDomain: string;
+  hasContactForm: boolean;
+  privacyControllerEmail: string;
+  dataRetentionMonths: string;
+  usesCookiesOrTrackers: boolean;
+  analyticsTool: string;
+  hasEcommerceOrPrices: boolean;
+  mediaRightsConfirmed: boolean;
+  portfolioAuthorization: boolean;
+}
+
 export interface ProjectQualityChecks {
   aiCopyReviewed: boolean;
   mobileTested: boolean;
   imageRightsVerified: boolean;
   legalMentionsAdded: boolean;
+  privacyPolicyAdded: boolean;
+  cookieComplianceChecked: boolean;
+  mediatorAddedIfB2C: boolean;
+  seoLocalMetaReady: boolean;
 }
 
 export interface ProjectIntegrations {
@@ -75,6 +129,7 @@ export interface ClientProject {
   contactEmail: string;
   contactPhone: string;
   brief: ProjectBrief;
+  legal: ProjectLegalInfo;
   qualityChecks: ProjectQualityChecks;
   integrations: ProjectIntegrations;
   generatedHtml: string;

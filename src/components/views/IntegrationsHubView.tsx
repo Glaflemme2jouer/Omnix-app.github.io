@@ -102,10 +102,17 @@ export const IntegrationsHubView: React.FC<IntegrationsHubViewProps> = ({
   // Netlify Sites
   const [netlifySites, setNetlifySites] = useState<Array<{ id: string; name: string; ssl_url?: string }>>([]);
 
-  // Legal Mentions & Design Lab
+  // Legal Mentions Quick Preview
   const [legalOwner, setLegalOwner] = useState('');
-  const [legalHost, setLegalHost] = useState('Netlify / GitHub Pages');
+  const [legalSiret, setLegalSiret] = useState('');
+  const [legalHost, setLegalHost] = useState('Netlify, Inc. · 512 2nd Street, San Francisco');
   const [legalEmail, setLegalEmail] = useState('');
+
+  useEffect(() => {
+    if (state.settings.discordWebhookUrl && !webhookInput) {
+      setWebhookInput(state.settings.discordWebhookUrl);
+    }
+  }, [state.settings.discordWebhookUrl]);
 
   const isConnected = (p: 'github' | 'discord' | 'figma' | 'netlify') =>
     Boolean(providerStatuses.find((s) => s.provider === p)?.connected);
@@ -186,7 +193,7 @@ export const IntegrationsHubView: React.FC<IntegrationsHubViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newRepoName.trim() }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || data.error || 'Erreur GitHub');
       setNewRepoName('');
       setStatusMessage({ type: 'ok', text: `Dépôt GitHub "${data.full_name}" créé.` });
@@ -225,7 +232,7 @@ export const IntegrationsHubView: React.FC<IntegrationsHubViewProps> = ({
           content: discordMessage.trim(),
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || 'Erreur Discord');
       setDiscordMessage('');
       setStatusMessage({ type: 'ok', text: 'Message envoyé sur votre salon Discord.' });
@@ -246,7 +253,7 @@ export const IntegrationsHubView: React.FC<IntegrationsHubViewProps> = ({
       : figmaKey;
     try {
       const res = await fetch(`/api/integrations/figma/file?fileKey=${encodeURIComponent(cleanedKey)}`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.err || data.error || 'Impossible de charger le fichier Figma');
       setFigmaData(data);
     } catch (err: any) {
@@ -264,7 +271,7 @@ export const IntegrationsHubView: React.FC<IntegrationsHubViewProps> = ({
     }
   };
 
-  const legalPreview = `Mentions légales : Site édité par ${legalOwner || '[Nom du client / responsable]'} · Contact : ${legalEmail || '[Email / Téléphone]'} · Hébergement : ${legalHost}.`;
+  const legalPreview = `Mentions légales (LCEN) : Édité par ${legalOwner || '[Raison sociale / Nom EI & Directeur pub.]'} · SIRET : ${legalSiret || '[14 chiffres]'} · Contact : ${legalEmail || '[E-mail & Téléphone]'} · Hébergeur : ${legalHost}. Données formulaire : conservées 36 mois max (droits RGPD via ${legalEmail || '[E-mail]'}).`;
 
   return (
     <div className="space-y-6">
@@ -707,29 +714,36 @@ export const IntegrationsHubView: React.FC<IntegrationsHubViewProps> = ({
             <div className="flex items-center gap-2">
               <Palette className="h-4 w-4 text-blue-600" />
               <h3 className="text-sm font-semibold text-slate-900">
-                Générateur de mentions légales (Guide §4)
+                Aperçu rapide Mentions légales & RGPD (générateur complet dans chaque Dossier Projet)
               </h3>
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <input
                 type="text"
                 value={legalOwner}
                 onChange={(e) => setLegalOwner(e.target.value)}
-                placeholder="Responsable"
+                placeholder="Entreprise & Directeur de publication"
                 className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
+              />
+              <input
+                type="text"
+                value={legalSiret}
+                onChange={(e) => setLegalSiret(e.target.value)}
+                placeholder="N° SIRET (14 chiffres)"
+                className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-mono"
               />
               <input
                 type="text"
                 value={legalEmail}
                 onChange={(e) => setLegalEmail(e.target.value)}
-                placeholder="Contact"
+                placeholder="Contact (e-mail + tél.)"
                 className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
               />
               <input
                 type="text"
                 value={legalHost}
                 onChange={(e) => setLegalHost(e.target.value)}
-                placeholder="Hébergeur"
+                placeholder="Hébergeur + adresse"
                 className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs"
               />
             </div>

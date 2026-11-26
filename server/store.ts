@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import type { AgencyState } from '../src/types.ts';
+import { normalizeProject } from '../src/lib/legalCompliance.ts';
 import { isPostgresEnabled, kvGet, kvSet } from './db.ts';
 
 const DATA_DIR = path.resolve(process.cwd(), '.data');
@@ -108,7 +109,9 @@ function normalizeState(parsed: Partial<AgencyState> | null | undefined): Agency
         typeof base.settings?.lockEnabled === 'boolean' ? base.settings.lockEnabled : true,
     },
     members: Array.isArray(base.members) ? base.members : [],
-    projects: Array.isArray(base.projects) ? base.projects : [],
+    projects: Array.isArray(base.projects)
+      ? base.projects.map((p) => normalizeProject(p))
+      : [],
     tasks: Array.isArray(base.tasks) ? base.tasks : [],
     appointments: Array.isArray(base.appointments) ? base.appointments : [],
     prospects: Array.isArray(base.prospects) ? base.prospects : [],

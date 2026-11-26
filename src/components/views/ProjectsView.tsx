@@ -5,6 +5,8 @@ import {
   Square,
   Trash2,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   FileText,
   Sparkles,
   FolderKanban,
@@ -15,6 +17,8 @@ import {
   Link2,
   Check,
   AlertCircle,
+  Scale,
+  Copy,
 } from 'lucide-react';
 import type {
   AgencyState,
@@ -22,10 +26,19 @@ import type {
   FinanceEntry,
   KanbanTask,
   OfferTier,
+  ProjectLegalInfo,
   ProjectStep,
   TaskColumn,
 } from '../../types';
 import { ConfirmModal } from '../ConfirmModal';
+import { LegalQuestionnaireForm } from '../LegalQuestionnaireForm';
+import {
+  createDefaultLegalInfo,
+  evaluateProjectLegalCompliance,
+  generateLegalNoticeHtml,
+  generateLegalNoticeText,
+  normalizeProject,
+} from '../../lib/legalCompliance';
 
 interface ProjectsViewProps {
   state: AgencyState;
@@ -91,13 +104,17 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const selectedProject =
     state.projects.find((p) => p.id === selectedProjectId) || state.projects[0];
 
-  const [draft, setDraft] = useState<ClientProject | null>(selectedProject || null);
+  const [draft, setDraft] = useState<ClientProject | null>(
+    selectedProject ? normalizeProject(selectedProject) : null
+  );
   const [isDirty, setIsDirty] = useState(false);
   const [savingDossier, setSavingDossier] = useState(false);
   const [dossierFeedback, setDossierFeedback] = useState<{
     type: 'ok' | 'err';
     text: string;
   } | null>(null);
+  const [copiedLegalMode, setCopiedLegalMode] = useState<'' | 'text' | 'html'>('');
+  const [showLegalPreview, setShowLegalPreview] = useState(false);
 
   // Create form state
   const [showNewForm, setShowNewForm] = useState(false);
@@ -108,6 +125,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const [newIsDemo, setNewIsDemo] = useState(false);
   const [newContactEmail, setNewContactEmail] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
+  const [newLegal, setNewLegal] = useState<ProjectLegalInfo>(() => createDefaultLegalInfo());
+  const [showNewLegalSection, setShowNewLegalSection] = useState(true);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
 
@@ -149,12 +168,13 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
       return;
     }
     if (!draft || draft.id !== selectedProject.id) {
-      setDraft(selectedProject);
+      setDraft(normalizeProject(selectedProject));
       setIsDirty(false);
       setDossierFeedback(null);
+      setShowLegalPreview(false);
       setPayAmount(Math.round(selectedProject.totalPriceEur * 0.3));
     } else if (!isDirty && draft.updatedAt !== selectedProject.updatedAt) {
-      setDraft(selectedProject);
+      setDraft(normalizeProject(selectedProject));
     }
   }, [selectedProject, draft, isDirty]);
 
@@ -177,6 +197,11 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     setCreating(true);
     setCreateError('');
     try {
+      const preparedLegal: ProjectLegalInfo = {
+        ...newLegal,
+        legalCompanyName: newLegal.legalCompanyName.trim() || newName.trim(),
+        privacyControllerEmail: newLegal.privacyControllerEmail.trim() || newContactEmail.trim(),
+      };
       const created = await onCreateProject({
         clientName: newName.trim(),
         sector: newSector.trim() || 'Commerce local',
@@ -185,18 +210,21 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
         isDemo: newIsDemo,
         contactEmail: newContactEmail.trim(),
         contactPhone: newContactPhone.trim(),
+        legal: preparedLegal,
         step: 1,
       });
       setSubTab('pipeline');
       setListFilter('all');
       onSelectProjectId(created.id);
-      setDraft(created);
+      setDraft(normalizeProject(created));
       setIsDirty(false);
       setNewName('');
       setNewSector('Commerce local');
       setNewContactEmail('');
       setNewContactPhone('');
       setNewIsDemo(false);
+      setNewLegal(createDefaultLegalInfo());
+      setShowNewLegalSection(true);
       setShowNewForm(false);
     } catch (err: any) {
       setCreateError(err?.message || 'Impossible de créer le projet.');
@@ -210,8 +238,15 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     setSavingDossier(true);
     setDossierFeedback(null);
     try {
-      const updated = await onUpdateProject(draft.id, updates);
-      setDraft(nextDraftState ? { ...updated, ...nextDraftState, updatedAt: updated.updatedAt } : updated);
+      // If there were unsaved local edits in draft, include them cleanly unless superseded
+      const payloadToSave: Partial<ClientProject> = nextDraftState
+        ? (() => {
+            const { id: _id, updatedAt: _u, ...rest } = nextDraftState;
+            return rest;
+          })()
+        : updates;
+      const updated = await onUpdateProject(draft.id, payloadToSave);
+      setDraft(normalizeProject(updated));
       setIsDirty(false);
       setDossierFeedback({ type: 'ok', text: 'Dossier enregistré.' });
     } catch (err: any) {
@@ -333,6 +368,30 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handleCopyLegalBlock = async (mode: 'text' | 'html') => {
+    if (!draft) return;
+    const content =
+      mode === 'html' ? generateLegalNoticeHtml(draft) : generateLegalNoticeText(draft);
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedLegalMode(mode);
+      setTimeout(() => setCopiedLegalMode(''), 2000);
+    } catch {
+      setDossierFeedback({
+        type: 'err',
+        text: 'Copie automatique bloquée par le navigateur. Ouvrez l’aperçu pour copier.',
+      });
+      setShowLegalPreview(true);
+    }
+  };
+
+  const normalizeExternalUrl = (url?: string) => {
+    if (!url) return '';
+    const trimmed = url.trim();
+    if (!trimmed) return '';
+    return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  };
+
   const updateDraftField = <K extends keyof ClientProject>(key: K, value: ClientProject[K]) => {
     setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
     setIsDirty(true);
@@ -348,6 +407,13 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const dossierTasks = draft ? state.tasks.filter((t) => t.projectId === draft.id) : [];
   const totalPaidForProject = draft ? (draft.depositPaidEur || 0) + (draft.balancePaidEur || 0) : 0;
   const remainingToPay = draft ? Math.max(0, (draft.totalPriceEur || 0) - totalPaidForProject) : 0;
+  const newLegalReport = evaluateProjectLegalCompliance({
+    clientName: newName,
+    isDemo: newIsDemo,
+    contactEmail: newContactEmail,
+    contactPhone: newContactPhone,
+    legal: newLegal,
+  });
 
   return (
     <div className="space-y-6">
@@ -488,8 +554,13 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                   onChange={(e) => {
                     const checked = e.target.checked;
                     setNewIsDemo(checked);
-                    if (checked) setNewPrice(0);
-                    else setNewPrice(OFFER_DEFAULTS[newTier].price);
+                    if (checked) {
+                      setNewPrice(0);
+                      setShowNewLegalSection(false);
+                    } else {
+                      setNewPrice(OFFER_DEFAULTS[newTier].price);
+                      setShowNewLegalSection(true);
+                    }
                   }}
                 />
                 <span>Site démo portfolio (gratuit)</span>
@@ -499,7 +570,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                 type="tel"
                 value={newContactPhone}
                 onChange={(e) => setNewContactPhone(e.target.value)}
-                placeholder="Téléphone (optionnel)"
+                placeholder="Téléphone du patron (obligatoire LCEN)"
                 className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-900"
               />
             </div>
@@ -520,6 +591,55 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                 {creating ? 'Création...' : 'Créer le projet'}
               </button>
             </div>
+          </div>
+
+          {/* Section Questionnaire Patron & Conformité Loi Française */}
+          <div className="rounded-xl border border-slate-200 bg-slate-50/50 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setShowNewLegalSection((prev) => !prev)}
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-100/70 transition-colors"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <Scale className="h-4 w-4 text-blue-600 shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold text-slate-900">
+                    Questionnaire Patron : Mentions légales, SIREN & Conformité loi française
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    À poser au client pour que son site respecte la loi (LCEN, RGPD, Code de la consommation) — modifiable aussi après création.
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span
+                  className={`text-[11px] font-semibold font-mono tabular-nums ${
+                    newLegalReport.isFullyCompliant ? 'text-emerald-700' : 'text-amber-700'
+                  }`}
+                >
+                  {newLegalReport.score}/{newLegalReport.total} prêts
+                </span>
+                {showNewLegalSection ? (
+                  <ChevronUp className="h-4 w-4 text-slate-500" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 text-slate-500" />
+                )}
+              </div>
+            </button>
+
+            {showNewLegalSection && (
+              <div className="border-t border-slate-200 bg-white p-4">
+                <LegalQuestionnaireForm
+                  clientName={newName}
+                  isDemo={newIsDemo}
+                  contactEmail={newContactEmail}
+                  contactPhone={newContactPhone}
+                  legal={newLegal}
+                  onChange={setNewLegal}
+                  compact
+                />
+              </div>
+            )}
           </div>
         </form>
       )}
@@ -576,6 +696,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                 ) : (
                   filteredProjects.map((proj) => {
                     const active = proj.id === draft?.id;
+                    const projLegal = evaluateProjectLegalCompliance(proj);
                     return (
                       <button
                         key={proj.id}
@@ -593,7 +714,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                             Étape {proj.step}/7 · {proj.offerTier} · {proj.totalPriceEur} €
                           </div>
                           <div className="mt-0.5 text-[11px] text-slate-400 truncate">
-                            {proj.isDemo ? 'Démo' : 'Client'} · {proj.sector}
+                            {proj.isDemo ? 'Démo' : 'Client'} · {proj.sector} · Loi {projLegal.score}/{projLegal.total}
                             {proj.generatedHtml ? ' · Site IA prêt' : ''}
                           </div>
                         </div>
@@ -999,17 +1120,22 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                   {/* Quality Checks + Post Delivery */}
                   <div className="border-t border-slate-100 pt-4 space-y-3">
                     <div className="text-xs font-semibold text-slate-900">
-                      Points à vérifier avant livraison (Guide §4) & suivi client
+                      Points à vérifier avant mise en ligne (Qualité, Loi & SEO local)
                     </div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       {[
-                        { key: 'aiCopyReviewed', label: 'Textes de l’IA relus (horaires, prix, noms)' },
-                        { key: 'mobileTested', label: 'Site testé sur téléphone' },
-                        { key: 'imageRightsVerified', label: 'Droits de chaque image vérifiés' },
-                        { key: 'legalMentionsAdded', label: 'Page mentions légales ajoutée' },
+                        { key: 'aiCopyReviewed', label: 'Textes relus (horaires, prix, adresse NAP)' },
+                        { key: 'mobileTested', label: 'Site testé sur téléphone (zéro coupure)' },
+                        { key: 'imageRightsVerified', label: 'Droits de chaque image et logo vérifiés' },
+                        { key: 'legalMentionsAdded', label: 'Mentions légales LCEN complètes ajoutées' },
+                        { key: 'privacyPolicyAdded', label: 'Politique de confidentialité RGPD ajoutée' },
+                        { key: 'cookieComplianceChecked', label: 'Analytics sans cookies ou bandeau CNIL ok' },
+                        { key: 'mediatorAddedIfB2C', label: 'Médiateur conso B2C indiqué (si particuliers)' },
+                        { key: 'seoLocalMetaReady', label: 'SEO local prêt (<title>, meta, H1, JSON-LD)' },
                       ].map((chk) => {
-                        const checked =
-                          draft.qualityChecks[chk.key as keyof typeof draft.qualityChecks];
+                        const checked = Boolean(
+                          draft.qualityChecks[chk.key as keyof typeof draft.qualityChecks]
+                        );
                         return (
                           <button
                             key={chk.key}
@@ -1080,6 +1206,81 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                   </div>
                 </div>
 
+                {/* Questionnaire Patron, Conformité Loi & Générateur Mentions Légales */}
+                <div className="rounded-xl border border-slate-200/90 bg-white p-6 space-y-5">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Scale className="h-4 w-4 text-blue-600" />
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        Questionnaire Patron & Mentions légales (Conformité loi française)
+                      </h3>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleCopyLegalBlock('text')}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0"
+                      >
+                        {copiedLegalMode === 'text' ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                        <span>{copiedLegalMode === 'text' ? 'Copié !' : 'Copier mentions (texte)'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyLegalBlock('html')}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0"
+                      >
+                        {copiedLegalMode === 'html' ? (
+                          <Check className="h-3.5 w-3.5 text-emerald-600" />
+                        ) : (
+                          <Copy className="h-3.5 w-3.5" />
+                        )}
+                        <span>{copiedLegalMode === 'html' ? 'Copié !' : 'Copier bloc HTML'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setShowLegalPreview((prev) => !prev)}
+                        className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-medium text-slate-700 hover:bg-slate-100 whitespace-nowrap shrink-0"
+                      >
+                        {showLegalPreview ? 'Masquer aperçu' : 'Aperçu mentions'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveFullDossier}
+                        disabled={savingDossier || !isDirty}
+                        className="rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-slate-800 disabled:opacity-40 whitespace-nowrap shrink-0"
+                      >
+                        Enregistrer infos légales
+                      </button>
+                    </div>
+                  </div>
+
+                  {showLegalPreview && (
+                    <div className="rounded-xl border border-slate-200 bg-slate-950 p-4 text-xs text-slate-100 space-y-2">
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>Texte prêt à insérer sur le site du client</span>
+                        <span>Inclus automatiquement lors de la génération Studio IA</span>
+                      </div>
+                      <pre className="whitespace-pre-wrap font-sans leading-relaxed text-slate-200 max-h-72 overflow-y-auto">
+                        {generateLegalNoticeText(draft)}
+                      </pre>
+                    </div>
+                  )}
+
+                  <LegalQuestionnaireForm
+                    clientName={draft.clientName}
+                    isDemo={draft.isDemo}
+                    contactEmail={draft.contactEmail}
+                    contactPhone={draft.contactPhone}
+                    legal={draft.legal}
+                    onChange={(nextLegal) => updateDraftField('legal', nextLegal)}
+                    onBlurSave={() => isDirty && handleSaveFullDossier()}
+                  />
+                </div>
+
                 {/* Brief 8 Questions */}
                 <div className="rounded-xl border border-slate-200/90 bg-white p-6 space-y-4">
                   <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3">
@@ -1141,7 +1342,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       )}
                       {draft.integrations.netlifyUrl && (
                         <a
-                          href={draft.integrations.netlifyUrl}
+                          href={normalizeExternalUrl(draft.integrations.netlifyUrl)}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-800 hover:bg-emerald-100 whitespace-nowrap shrink-0"

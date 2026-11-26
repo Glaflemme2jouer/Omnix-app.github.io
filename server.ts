@@ -26,6 +26,11 @@ import type {
   TeamMember,
   ThirdPartyProviderStatus,
 } from './src/types.ts';
+import {
+  evaluateProjectLegalCompliance,
+  generateLegalNoticeText,
+  normalizeProject,
+} from './src/lib/legalCompliance.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const SESSION_COOKIE = 'awj_sid';
@@ -690,7 +695,17 @@ async function startServer() {
     res.json({ state: merged });
   }));
 
-  app.post('/api/agency/reset', asyncRoute(async (_req, res) => {
+  app.post('/api/agency/reset', asyncRoute(async (req, res) => {
+    const current = loadAgencyState();
+    const authEmail = ((req as any).authEmail as string | undefined)?.toLowerCase();
+    if (
+      current.settings.lockEnabled &&
+      current.settings.adminEmails.length > 0 &&
+      (!authEmail || !current.settings.adminEmails.includes(authEmail))
+    ) {
+      res.status(403).json({ error: 'Seul un administrateur peut réinitialiser l’espace.' });
+      return;
+    }
     const fresh = await resetAgencyState();
     res.json(fresh);
   }));
@@ -759,52 +774,13 @@ async function startServer() {
   app.post('/api/agency/projects', asyncRoute(async (req, res) => {
     const state = loadAgencyState();
     const body = req.body as Partial<ClientProject>;
-    const project: ClientProject = {
+    const project = normalizeProject({
+      ...body,
       id: `proj-${Date.now()}`,
-      clientName: (body.clientName || '').trim() || 'Nouveau client',
-      sector: (body.sector || '').trim() || 'Commerce local',
-      isDemo: Boolean(body.isDemo),
-      step: body.step || 1,
-      offerTier: body.offerTier || 'Standard',
-      totalPriceEur:
-        body.totalPriceEur !== undefined && !Number.isNaN(Number(body.totalPriceEur))
-          ? Number(body.totalPriceEur)
-          : 380,
-      depositPaidEur: Number(body.depositPaidEur) || 0,
-      balancePaidEur: Number(body.balancePaidEur) || 0,
-      revisionsIncluded:
-        body.revisionsIncluded !== undefined && !Number.isNaN(Number(body.revisionsIncluded))
-          ? Number(body.revisionsIncluded)
-          : 2,
-      deliveryTargetDate:
-        body.deliveryTargetDate || new Date(Date.now() + 9 * 86400000).toISOString().slice(0, 10),
       ownerMemberId: body.ownerMemberId || state.members[0]?.id || '',
       commercialMemberId: body.commercialMemberId || state.members[0]?.id || '',
-      contactEmail: body.contactEmail || '',
-      contactPhone: body.contactPhone || '',
-      brief: body.brief || {
-        activitySummary: '',
-        targetClients: '',
-        desiredPages: 'Accueil, Services, Horaires & Contact',
-        inspirationSites: '',
-        existingAssets: '',
-        hoursAddressPhone: '',
-        primaryVisitorAction: 'Appeler ou envoyer un message',
-        budgetRange: '300 à 500 €',
-      },
-      qualityChecks: body.qualityChecks || {
-        aiCopyReviewed: false,
-        mobileTested: false,
-        imageRightsVerified: false,
-        legalMentionsAdded: false,
-      },
-      integrations: body.integrations || {},
-      generatedHtml: body.generatedHtml || '',
-      followUp30Done: Boolean(body.followUp30Done),
-      googleReviewRequested: Boolean(body.googleReviewRequested),
-      notes: body.notes || '',
       updatedAt: new Date().toISOString(),
-    };
+    });
     state.projects.unshift(project);
     await saveAgencyState(state);
     res.json({ project, state });
@@ -817,12 +793,22 @@ async function startServer() {
       res.status(404).json({ error: 'Projet introuvable.' });
       return;
     }
-    state.projects[idx] = {
-      ...state.projects[idx],
-      ...req.body,
+    const existing = normalizeProject(state.projects[idx]);
+    const body = req.body as Partial<ClientProject>;
+    state.projects[idx] = normalizeProject({
+      ...existing,
+      ...body,
+      brief: body.brief ? { ...existing.brief, ...body.brief } : existing.brief,
+      legal: body.legal ? { ...existing.legal, ...body.legal } : existing.legal,
+      qualityChecks: body.qualityChecks
+        ? { ...existing.qualityChecks, ...body.qualityChecks }
+        : existing.qualityChecks,
+      integrations: body.integrations
+        ? { ...existing.integrations, ...body.integrations }
+        : existing.integrations,
       id: req.params.id,
       updatedAt: new Date().toISOString(),
-    };
+    });
     await saveAgencyState(state);
     res.json({ project: state.projects[idx], state });
   }));
@@ -842,7 +828,7 @@ async function startServer() {
       projectId: req.body.projectId || state.projects[0]?.id || '',
       title: req.body.title || 'Nouvelle tâche',
       column: req.body.column || 'À faire',
-      assigneeMemberId: req.body.assigneeMemberId || state.members[0]?.id || 'mem-1',
+      assigneeMemberId: req.body.assigneeMemberId || state.members[0]?.id || '',
       dueDate: req.body.dueDate || new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
     };
     state.tasks.unshift(task);
@@ -1066,17 +1052,27 @@ async function startServer() {
       };
 
       const ai = getAiClient();
-      const briefContext = project
+      const normalizedProject = project ? normalizeProject(project) : null;
+      const legalNoticeBlock = normalizedProject
+        ? generateLegalNoticeText(normalizedProject)
+        : '';
+
+      const briefContext = normalizedProject
         ? `
-Client : ${project.clientName} (${project.sector})
-Formule : ${project.offerTier}
-Résumé d'activité : ${project.brief.activitySummary}
-Public cible : ${project.brief.targetClients}
-Pages / sections souhaitées : ${project.brief.desiredPages}
-Horaires, adresse et téléphone exacts : ${project.brief.hoursAddressPhone}
-Action principale demandée au visiteur : ${project.brief.primaryVisitorAction}
-Email de contact : ${project.contactEmail}
-Téléphone : ${project.contactPhone}
+Client : ${normalizedProject.clientName} (${normalizedProject.sector})
+Type : ${normalizedProject.isDemo ? 'Site démo portfolio' : 'Site client réel'}
+Formule : ${normalizedProject.offerTier}
+Résumé d'activité : ${normalizedProject.brief.activitySummary}
+Public cible : ${normalizedProject.brief.targetClients}
+Pages / sections souhaitées : ${normalizedProject.brief.desiredPages}
+Horaires, adresse et téléphone exacts : ${normalizedProject.brief.hoursAddressPhone}
+Action principale demandée au visiteur : ${normalizedProject.brief.primaryVisitorAction}
+Email de contact : ${normalizedProject.contactEmail}
+Téléphone : ${normalizedProject.contactPhone}
+Domaine cible : ${normalizedProject.legal.customDomain || 'À définir'}
+
+DONNÉES LÉGALES OFFICIELLES DU PATRON À INTÉGRER DANS LES MENTIONS LÉGALES & CONFIDENTIALITÉ :
+${legalNoticeBlock}
 `
         : '';
 
@@ -1087,17 +1083,19 @@ Typographie souhaitée : ${fontPair || 'Plus Jakarta Sans + DM Sans'}
 
       const fullPrompt = `Tu es le moteur de création web intégré de Google AI Studio pour une jeune agence web française.
 Génère un fichier HTML5 complet, autonome et responsive (mobile-first) avec CSS intégré dans une balise <style> (aucune dépendance externe cassée).
-Exigences strictes :
+Exigences strictes (Conformité loi française LCEN / RGPD / Code de la consommation + Guide SEO local) :
 1. Rédige tout le contenu en français naturel, clair et professionnel.
-2. Respecte scrupuleusement les horaires, adresses, téléphones et informations fournies sans rien inventer de trompeur.
-3. Inclus un header épuré, une section héros avec un bouton d'action clair (${project?.brief.primaryVisitorAction || 'Contacter / Appeler'}), les sections de services/horaires/adresse, un formulaire de contact prêt à être branché sur Formspree/Tally, et un pied de page avec une section "Mentions légales" (nom du responsable, hébergeur GitHub Pages/Netlify, contact).
-4. Assure une excellente lisibilité sur téléphone (viewport meta, grille CSS responsive, contrastes élevés).
-5. Réponds UNIQUEMENT avec le code HTML complet commençant par <!DOCTYPE html>.
+2. Respecte scrupuleusement les horaires, adresses, téléphones et informations fournies sans rien inventer de trompeur (NAP identique partout).
+3. SEO local obligatoire : une balise <title> <= 60 caractères, une <meta name="description"> <= 150 caractères, un seul <h1> dans la page, et un script JSON-LD <script type="application/ld+json"> de type LocalBusiness cohérent.
+4. Inclus un header épuré, une section héros avec un bouton d'action clair (${normalizedProject?.brief.primaryVisitorAction || 'Contacter / Appeler'}), les sections de services/horaires/adresse, et un formulaire de contact prêt pour Formspree/Tally avec mention RGPD obligatoire sous le formulaire (finalité, durée de conservation, droits d'accès/suppression et e-mail de contact).
+5. Pied de page & Conformité légale obligatoire : intègre une section complète et accessible "Mentions légales & Confidentialité" (avec ancre #mentions-legales ou modal/accordéon propre) reprenant EXACTEMENT toutes les informations légales officielles fournies ci-dessous (Raison sociale/Nom EI, Forme juridique, Capital social si société, SIREN/SIRET, RCS/RNE/RNA, TVA ou mention art. 293 B CGI, Directeur de publication, Adresse, Hébergeur complet avec adresse et contact, Médiateur de la consommation si B2C, Politique de confidentialité RGPD et gestion des cookies sans traceurs publicitaires).
+6. Assure une excellente lisibilité sur téléphone (viewport meta, grille CSS responsive, contrastes élevés).
+7. Réponds UNIQUEMENT avec le code HTML complet commençant par <!DOCTYPE html>.
 
 ${briefContext}
 ${designContext}
 Instructions complémentaires de l'équipe :
-${prompt || 'Crée un site vitrine moderne, chaleureux et rassurant pour ce commerce local.'}`;
+${prompt || 'Crée un site vitrine moderne, chaleureux, rassurant et 100 % conforme à la loi française pour ce commerce local.'}`;
 
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
@@ -1130,7 +1128,7 @@ ${prompt || 'Crée un site vitrine moderne, chaleureux et rassurant pour ce comm
       const ai = getAiClient();
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
-        contents: `Voici le code HTML/CSS complet d'un site client :\n\n${currentHtml}\n\nApplique exactement cette modification demandée par le développeur de l'équipe :\n"${instruction}"\n\nConserve la structure responsive mobile, les mentions légales et réponds UNIQUEMENT avec le code HTML complet mis à jour (<!DOCTYPE html> ... </html>).`,
+        contents: `Voici le code HTML/CSS complet d'un site client :\n\n${currentHtml}\n\nApplique exactement cette modification demandée par le développeur de l'équipe :\n"${instruction}"\n\nConserve la structure responsive mobile, le SEO local, les mentions légales LCEN et la politique de confidentialité RGPD, et réponds UNIQUEMENT avec le code HTML complet mis à jour (<!DOCTYPE html> ... </html>).`,
       });
       const html = extractHtmlDocument(response.text || '');
       res.json({ html });
@@ -1147,17 +1145,21 @@ ${prompt || 'Crée un site vitrine moderne, chaleureux et rassurant pour ce comm
         res.status(400).json({ error: 'Code HTML requis pour l’audit.' });
         return;
       }
+      const normalizedProject = project ? normalizeProject(project) : null;
       const ai = getAiClient();
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
-        contents: `Audite ce code HTML selon les 4 points de contrôle qualité obligatoires d'une agence web junior :
-1. Cohérence des textes (horaires, prix, noms, téléphone : référence = "${project?.brief.hoursAddressPhone || 'non précisé'}").
-2. Adaptation téléphone (viewport, media queries ou grilles flex/grid responsives).
+        contents: `Audite ce code HTML selon les 7 points de contrôle qualité et de conformité légale française (LCEN, RGPD/CNIL, Code de la consommation, Guide SEO local) :
+1. Cohérence des textes & NAP (horaires, prix, noms, téléphone : référence = "${normalizedProject?.brief.hoursAddressPhone || 'non précisé'}").
+2. Adaptation téléphone (viewport meta, media queries ou grilles flex/grid responsives).
 3. Images (pas de liens cassés ou protégés non vérifiés).
-4. Présence des mentions légales (responsable, hébergeur, contact).
+4. Mentions légales LCEN complètes : identité/forme juridique (${normalizedProject?.legal.legalForm || 'à vérifier'}), SIREN/SIRET (${normalizedProject?.legal.siret || normalizedProject?.legal.siren || 'à vérifier'}), RCS/RNE/capital, directeur de publication (${normalizedProject?.legal.publicationDirector || 'à vérifier'}), adresse et hébergeur complet (${normalizedProject?.legal.hostingProviderName || 'à vérifier'}).
+5. RGPD & Formulaire de contact : si un formulaire existe, présence d'une politique de confidentialité (finalité, durée de conservation, droits accès/suppression, e-mail RGPD, référence CNIL).
+6. Médiateur de la consommation B2C (si commerce avec particuliers) : présence des coordonnées d'un médiateur conso (Art. L.616-1) ou note si B2B.
+7. Cookies & SEO local : pas de traceurs sans consentement CNIL, présence de <title>, <meta description>, un seul <h1> et idéalement JSON-LD LocalBusiness.
 
 Code HTML à vérifier :
-${html.slice(0, 18000)}`,
+${html.slice(0, 22000)}`,
         config: {
           responseMimeType: 'application/json',
           responseSchema: {
@@ -1183,7 +1185,7 @@ ${html.slice(0, 18000)}`,
       res.json(parsed);
     } catch (error: any) {
       console.error('AI review-site error:', error);
-      res.status(500).json({ error: error?.message || 'Erreur lors de l’audit qualité IA.' });
+      res.status(500).json({ error: error?.message || 'Erreur lors de l’audit qualité & conformité IA.' });
     }
   });
 
@@ -1472,20 +1474,29 @@ Garde un ton authentique, concis (5 à 7 lignes max), sans jargon marketing exag
         },
         projects: {
           count: state.projects.length,
-          list: state.projects.map((p) => ({
-            clientName: p.clientName,
-            sector: p.sector,
-            isDemo: p.isDemo,
-            step: `${p.step}/7`,
-            offerTier: p.offerTier,
-            totalPriceEur: p.totalPriceEur,
-            depositPaidEur: p.depositPaidEur,
-            balancePaidEur: p.balancePaidEur,
-            deliveryTargetDate: p.deliveryTargetDate,
-            qualityChecksPassed: Object.values(p.qualityChecks).filter(Boolean).length,
-            hasGeneratedHtml: Boolean(p.generatedHtml),
-            integrations: p.integrations,
-          })),
+          list: state.projects.map((p) => {
+            const legalReport = evaluateProjectLegalCompliance(p);
+            return {
+              clientName: p.clientName,
+              sector: p.sector,
+              isDemo: p.isDemo,
+              step: `${p.step}/7`,
+              offerTier: p.offerTier,
+              totalPriceEur: p.totalPriceEur,
+              depositPaidEur: p.depositPaidEur,
+              balancePaidEur: p.balancePaidEur,
+              deliveryTargetDate: p.deliveryTargetDate,
+              qualityChecksPassed: Object.values(p.qualityChecks).filter(Boolean).length,
+              legalCompliance: `${legalReport.score}/${legalReport.total} (${legalReport.percent}%)`,
+              legalMissing: legalReport.missingLabels,
+              siren: p.legal?.siren || '',
+              siret: p.legal?.siret || '',
+              legalForm: p.legal?.legalForm || '',
+              hostingProvider: p.legal?.hostingProvider || '',
+              hasGeneratedHtml: Boolean(p.generatedHtml),
+              integrations: p.integrations,
+            };
+          }),
         },
         tasks: {
           count: state.tasks.length,

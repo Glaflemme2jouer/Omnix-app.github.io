@@ -128,9 +128,16 @@ export const TeamFinanceView: React.FC<TeamFinanceViewProps> = ({
 
   const handleCopyShareLink = async () => {
     if (!sharedAppUrl) return;
-    await navigator.clipboard.writeText(sharedAppUrl);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
+    try {
+      await navigator.clipboard.writeText(sharedAppUrl);
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2000);
+    } catch {
+      setAccessMessage({
+        type: 'err',
+        text: 'Copie automatique bloquée. Sélectionnez et copiez le lien manuellement.',
+      });
+    }
   };
 
   const handleAddAllowedEmail = async (e: React.FormEvent) => {
@@ -157,7 +164,7 @@ export const TeamFinanceView: React.FC<TeamFinanceViewProps> = ({
           isAdmin: inviteAsAdmin,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setAccessMessage({ type: 'err', text: data.error || 'Impossible d’autoriser ce membre.' });
         return;
@@ -173,6 +180,8 @@ export const TeamFinanceView: React.FC<TeamFinanceViewProps> = ({
           ? `Accès créé pour ${cleaned} avec mot de passe.`
           : `Adresse ${cleaned} autorisée.`,
       });
+    } catch (err: any) {
+      setAccessMessage({ type: 'err', text: err?.message || 'Erreur réseau.' });
     } finally {
       setSavingAccess(false);
     }
@@ -194,7 +203,7 @@ export const TeamFinanceView: React.FC<TeamFinanceViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password: editingPasswordValue.trim() }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setAccessMessage({ type: 'err', text: data.error || 'Erreur lors de la mise à jour.' });
         return;
@@ -204,6 +213,8 @@ export const TeamFinanceView: React.FC<TeamFinanceViewProps> = ({
       setEditingPasswordEmail(null);
       setEditingPasswordValue('');
       setAccessMessage({ type: 'ok', text: `Mot de passe mis à jour pour ${email}.` });
+    } catch (err: any) {
+      setAccessMessage({ type: 'err', text: err?.message || 'Erreur réseau.' });
     } finally {
       setSavingAccess(false);
     }
@@ -220,13 +231,15 @@ export const TeamFinanceView: React.FC<TeamFinanceViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, isAdmin: !isCurrentlyAdmin }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setAccessMessage({ type: 'err', text: data.error || 'Modification impossible.' });
         return;
       }
       if (data.state) onStateReplaced(data.state);
       if (data.accessMembers) setAccessMembers(data.accessMembers);
+    } catch (err: any) {
+      setAccessMessage({ type: 'err', text: err?.message || 'Erreur réseau.' });
     } finally {
       setSavingAccess(false);
     }
@@ -241,13 +254,15 @@ export const TeamFinanceView: React.FC<TeamFinanceViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setAccessMessage({ type: 'err', text: data.error || 'Suppression impossible.' });
         return;
       }
       if (data.state) onStateReplaced(data.state);
       if (data.accessMembers) setAccessMembers(data.accessMembers);
+    } catch (err: any) {
+      setAccessMessage({ type: 'err', text: err?.message || 'Erreur réseau.' });
     } finally {
       setSavingAccess(false);
     }
@@ -270,7 +285,7 @@ export const TeamFinanceView: React.FC<TeamFinanceViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ newPassword: myNewPassword.trim(), email: normalizedUserEmail }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setAccessMessage({ type: 'err', text: data.error || 'Impossible de modifier le mot de passe.' });
         return;
@@ -281,6 +296,8 @@ export const TeamFinanceView: React.FC<TeamFinanceViewProps> = ({
         type: 'ok',
         text: 'Votre mot de passe Omnix est enregistré. Vous pourrez l’utiliser à la prochaine connexion.',
       });
+    } catch (err: any) {
+      setAccessMessage({ type: 'err', text: err?.message || 'Erreur réseau.' });
     } finally {
       setSavingAccess(false);
     }
@@ -307,7 +324,7 @@ export const TeamFinanceView: React.FC<TeamFinanceViewProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(parsed),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setAccessMessage({ type: 'err', text: data.error || 'Import impossible.' });
         return;
@@ -851,12 +868,13 @@ export const TeamFinanceView: React.FC<TeamFinanceViewProps> = ({
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <input
+                            key={`${m.id}-${m.parentName}`}
                             type="text"
                             defaultValue={m.parentName}
                             onBlur={(e) => {
                               const nextName = e.target.value.trim() || 'À renseigner';
                               if (nextName !== m.parentName) {
-                                onUpdateMember(m.id, { parentName: nextName });
+                                onUpdateMember(m.id, { parentName: nextName }).catch(() => {});
                               }
                             }}
                             placeholder="Nom du parent"

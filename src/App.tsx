@@ -13,6 +13,7 @@ import { TeamFinanceView } from './components/views/TeamFinanceView';
 import { ShieldCheck, LogOut, Eye, EyeOff, KeyRound, AlertCircle, X } from 'lucide-react';
 import { GoogleSignInButton } from './components/GoogleSignInButton';
 import { googleSignIn, initAuth, logoutGoogle } from './lib/firebaseAuth';
+import { createDefaultLegalInfo } from './lib/legalCompliance';
 import type {
   AgencyAppointment,
   AgencyState,
@@ -813,6 +814,15 @@ export default function App() {
                   contactPhone: prospect.phone,
                   isDemo: false,
                   step: 1,
+                  legal: createDefaultLegalInfo({
+                    legalForm:
+                      prospect.category === 'Club / Association'
+                        ? 'Association loi 1901'
+                        : 'EI / Micro-entrepreneur',
+                    legalCompanyName: prospect.businessName,
+                    privacyControllerEmail: prospect.contactEmail,
+                    registeredAddress: prospect.cityArea,
+                  }),
                   notes: prospect.notes
                     ? `Issu de prospection (${prospect.cityArea}). ${prospect.notes}`
                     : `Issu de prospection (${prospect.cityArea}).`,
